@@ -2,7 +2,7 @@
 # Copyright 2019 Analog Devices Inc.
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/bindings/iio/adc/adi,ad7192.yaml#
+$id: http://devicetree.org/schemas/iio/adc/adi,ad7192.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: Analog Devices AD7192 ADC device driver
@@ -43,13 +43,9 @@ properties:
 
   dvdd-supply:
     description: DVdd voltage supply
-    items:
-      - const: dvdd
 
   avdd-supply:
     description: AVdd voltage supply
-    items:
-      - const: avdd
 
   adi,rejection-60-Hz-enable:
     description: |
@@ -99,6 +95,9 @@ required:
 examples:
   - |
     spi0 {
+      #address-cells = <1>;
+      #size-cells = <0>;
+
       adc@0 {
         compatible = "adi,ad7192";
         reg = <0>;
@@ -107,7 +106,6 @@ examples:
         spi-cpha;
         clocks = <&ad7192_mclk>;
         clock-names = "mclk";
-        #interrupt-cells = <2>;
         interrupts = <25 0x2>;
         interrupt-parent = <&gpio>;
         dvdd-supply = <&dvdd>;

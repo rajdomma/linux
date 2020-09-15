@@ -15,7 +15,6 @@
 #include <linux/stringify.h>
 
 #include "build-id.h"
-#include "util.h"
 #include "event.h"
 #include "debug.h"
 #include "evlist.h"
@@ -27,7 +26,7 @@
 #include "jit.h"
 #include "jitdump.h"
 #include "genelf.h"
-#include "../builtin.h"
+#include "thread.h"
 
 #include <linux/ctype.h>
 #include <linux/zalloc.h>
@@ -59,7 +58,7 @@ struct debug_line_info {
 	unsigned long vma;
 	unsigned int lineno;
 	/* The filename format is unspecified, absolute path, relative etc. */
-	char const filename[0];
+	char const filename[];
 };
 
 struct jit_tool {
@@ -397,7 +396,7 @@ static int jit_repipe_code_load(struct jit_buf_desc *jd, union jr_entry *jr)
 	size_t size;
 	u16 idr_size;
 	const char *sym;
-	uint32_t count;
+	uint64_t count;
 	int ret, csize, usize;
 	pid_t pid, tid;
 	struct {
@@ -420,7 +419,7 @@ static int jit_repipe_code_load(struct jit_buf_desc *jd, union jr_entry *jr)
 		return -1;
 
 	filename = event->mmap2.filename;
-	size = snprintf(filename, PATH_MAX, "%s/jitted-%d-%u.so",
+	size = snprintf(filename, PATH_MAX, "%s/jitted-%d-%" PRIu64 ".so",
 			jd->dir,
 			pid,
 			count);
@@ -531,7 +530,7 @@ static int jit_repipe_code_move(struct jit_buf_desc *jd, union jr_entry *jr)
 		return -1;
 
 	filename = event->mmap2.filename;
-	size = snprintf(filename, PATH_MAX, "%s/jitted-%d-%"PRIu64,
+	size = snprintf(filename, PATH_MAX, "%s/jitted-%d-%" PRIu64 ".so",
 	         jd->dir,
 	         pid,
 		 jr->move.code_index);
@@ -751,6 +750,28 @@ jit_detect(char *mmap_name, pid_t pid)
 	return 0;
 }
 
+static void jit_add_pid(struct machine *machine, pid_t pid)
+{
+	struct thread *thread = machine__findnew_thread(machine, pid, pid);
+
+	if (!thread) {
+		pr_err("%s: thread %d not found or created\n", __func__, pid);
+		return;
+	}
+
+	thread->priv = (void *)1;
+}
+
+static bool jit_has_pid(struct machine *machine, pid_t pid)
+{
+	struct thread *thread = machine__find_thread(machine, pid, pid);
+
+	if (!thread)
+		return 0;
+
+	return (bool)thread->priv;
+}
+
 int
 jit_process(struct perf_session *session,
 	    struct perf_data *output,
@@ -766,8 +787,13 @@ jit_process(struct perf_session *session,
 	/*
 	 * first, detect marker mmap (i.e., the jitdump mmap)
 	 */
-	if (jit_detect(filename, pid))
+	if (jit_detect(filename, pid)) {
+		// Strip //anon* mmaps if we processed a jitdump for this pid
+		if (jit_has_pid(machine, pid) && (strncmp(filename, "//anon", 6) == 0))
+			return 1;
+
 		return 0;
+	}
 
 	memset(&jd, 0, sizeof(jd));
 
@@ -779,13 +805,14 @@ jit_process(struct perf_session *session,
 	 * track sample_type to compute id_all layout
 	 * perf sets the same sample type to all events as of now
 	 */
-	first = perf_evlist__first(session->evlist);
+	first = evlist__first(session->evlist);
 	jd.sample_type = first->core.attr.sample_type;
 
 	*nbytes = 0;
 
 	ret = jit_inject(&jd, filename);
 	if (!ret) {
+		jit_add_pid(machine, pid);
 		*nbytes = jd.bytes_written;
 		ret = 1;
 	}

@@ -237,6 +237,7 @@ static const struct adxl372_axis_lookup adxl372_axis_lookup_table[] = {
 		.realbits = 12,						\
 		.storagebits = 16,					\
 		.shift = 4,						\
+		.endianness = IIO_BE,					\
 	},								\
 }
 
@@ -474,12 +475,17 @@ static int adxl372_configure_fifo(struct adxl372_state *st)
 	if (ret < 0)
 		return ret;
 
-	fifo_samples = st->watermark & 0xFF;
+	/*
+	 * watermark stores the number of sets; we need to write the FIFO
+	 * registers with the number of samples
+	 */
+	fifo_samples = (st->watermark * st->fifo_set_size);
 	fifo_ctl = ADXL372_FIFO_CTL_FORMAT_MODE(st->fifo_format) |
 		   ADXL372_FIFO_CTL_MODE_MODE(st->fifo_mode) |
-		   ADXL372_FIFO_CTL_SAMPLES_MODE(st->watermark);
+		   ADXL372_FIFO_CTL_SAMPLES_MODE(fifo_samples);
 
-	ret = regmap_write(st->regmap, ADXL372_FIFO_SAMPLES, fifo_samples);
+	ret = regmap_write(st->regmap,
+			   ADXL372_FIFO_SAMPLES, fifo_samples & 0xFF);
 	if (ret < 0)
 		return ret;
 
@@ -548,8 +554,7 @@ static irqreturn_t adxl372_trigger_handler(int irq, void  *p)
 			goto err;
 
 		/* Each sample is 2 bytes */
-		for (i = 0; i < fifo_entries * sizeof(u16);
-		     i += st->fifo_set_size * sizeof(u16))
+		for (i = 0; i < fifo_entries; i += st->fifo_set_size)
 			iio_push_to_buffers(indio_dev, &st->fifo_buf[i]);
 	}
 err:
@@ -570,6 +575,14 @@ static int adxl372_setup(struct adxl372_state *st)
 		dev_err(st->dev, "Invalid chip id %x\n", regval);
 		return -ENODEV;
 	}
+
+	/*
+	 * Perform a software reset to make sure the device is in a consistent
+	 * state after start up.
+	 */
+	ret = regmap_write(st->regmap, ADXL372_RESET, ADXL372_RESET_CODE);
+	if (ret < 0)
+		return ret;
 
 	ret = adxl372_set_op_mode(st, ADXL372_STANDBY);
 	if (ret < 0)
@@ -782,13 +795,9 @@ static int adxl372_buffer_postenable(struct iio_dev *indio_dev)
 	unsigned int mask;
 	int i, ret;
 
-	ret = iio_triggered_buffer_postenable(indio_dev);
-	if (ret < 0)
-		return ret;
-
 	ret = adxl372_set_interrupts(st, ADXL372_INT1_MAP_FIFO_FULL_MSK, 0);
 	if (ret < 0)
-		goto err;
+		return ret;
 
 	mask = *indio_dev->active_scan_mask;
 
@@ -797,10 +806,8 @@ static int adxl372_buffer_postenable(struct iio_dev *indio_dev)
 			break;
 	}
 
-	if (i == ARRAY_SIZE(adxl372_axis_lookup_table)) {
-		ret = -EINVAL;
-		goto err;
-	}
+	if (i == ARRAY_SIZE(adxl372_axis_lookup_table))
+		return -EINVAL;
 
 	st->fifo_format = adxl372_axis_lookup_table[i].fifo_format;
 	st->fifo_set_size = bitmap_weight(indio_dev->active_scan_mask,
@@ -820,14 +827,10 @@ static int adxl372_buffer_postenable(struct iio_dev *indio_dev)
 	if (ret < 0) {
 		st->fifo_mode = ADXL372_FIFO_BYPASSED;
 		adxl372_set_interrupts(st, 0, 0);
-		goto err;
+		return ret;
 	}
 
 	return 0;
-
-err:
-	iio_triggered_buffer_predisable(indio_dev);
-	return ret;
 }
 
 static int adxl372_buffer_predisable(struct iio_dev *indio_dev)
@@ -838,7 +841,7 @@ static int adxl372_buffer_predisable(struct iio_dev *indio_dev)
 	st->fifo_mode = ADXL372_FIFO_BYPASSED;
 	adxl372_configure_fifo(st);
 
-	return iio_triggered_buffer_predisable(indio_dev);
+	return 0;
 }
 
 static const struct iio_buffer_setup_ops adxl372_buffer_ops = {
@@ -925,7 +928,6 @@ int adxl372_probe(struct device *dev, struct regmap *regmap,
 	indio_dev->channels = adxl372_channels;
 	indio_dev->num_channels = ARRAY_SIZE(adxl372_channels);
 	indio_dev->available_scan_masks = adxl372_channel_masks;
-	indio_dev->dev.parent = dev;
 	indio_dev->name = name;
 	indio_dev->info = &adxl372_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_SOFTWARE;

@@ -498,7 +498,7 @@ static ssize_t ab3100_get_set_reg(struct file *file,
 	int i = 0;
 
 	/* Get userspace string and assure termination */
-	buf_size = min(count, (sizeof(buf)-1));
+	buf_size = min((ssize_t)count, (ssize_t)(sizeof(buf)-1));
 	if (copy_from_user(buf, user_buf, buf_size))
 		return -EFAULT;
 	buf[buf_size] = 0;
@@ -865,10 +865,10 @@ static int ab3100_probe(struct i2c_client *client,
 		 &ab3100->chip_name[0]);
 
 	/* Attach a second dummy i2c_client to the test register address */
-	ab3100->testreg_client = i2c_new_dummy(client->adapter,
+	ab3100->testreg_client = i2c_new_dummy_device(client->adapter,
 					       client->addr + 1);
-	if (!ab3100->testreg_client) {
-		err = -ENOMEM;
+	if (IS_ERR(ab3100->testreg_client)) {
+		err = PTR_ERR(ab3100->testreg_client);
 		goto exit_no_testreg_client;
 	}
 

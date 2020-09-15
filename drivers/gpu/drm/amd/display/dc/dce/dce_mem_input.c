@@ -148,7 +148,7 @@ static void dce_mi_program_pte_vm(
 			pte->min_pte_before_flip_horiz_scan;
 
 	REG_UPDATE(GRPH_PIPE_OUTSTANDING_REQUEST_LIMIT,
-			GRPH_PIPE_OUTSTANDING_REQUEST_LIMIT, 0xff);
+			GRPH_PIPE_OUTSTANDING_REQUEST_LIMIT, 0x7f);
 
 	REG_UPDATE_3(DVMM_PTE_CONTROL,
 			DVMM_PAGE_WIDTH, page_width,
@@ -157,7 +157,7 @@ static void dce_mi_program_pte_vm(
 
 	REG_UPDATE_2(DVMM_PTE_ARB_CONTROL,
 			DVMM_PTE_REQ_PER_CHUNK, pte->pte_req_per_chunk,
-			DVMM_MAX_PTE_REQ_OUTSTANDING, 0xff);
+			DVMM_MAX_PTE_REQ_OUTSTANDING, 0x7f);
 }
 
 static void program_urgency_watermark(
@@ -479,7 +479,7 @@ static void program_grph_pixel_format(
 	case SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616F:
 		sign = 1;
 		floating = 1;
-		/* fall through */
+		fallthrough;
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F: /* shouldn't this get float too? */
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
 		grph_depth = 3;
@@ -606,11 +606,11 @@ static void dce_mi_allocate_dmif(
 	}
 
 	if (dce_mi->wa.single_head_rdreq_dmif_limit) {
-		uint32_t eanble =  (total_stream_num > 1) ? 0 :
+		uint32_t enable =  (total_stream_num > 1) ? 0 :
 				dce_mi->wa.single_head_rdreq_dmif_limit;
 
 		REG_UPDATE(MC_HUB_RDREQ_DMIF_LIMIT,
-				ENABLE, eanble);
+				ENABLE, enable);
 	}
 }
 
@@ -636,11 +636,11 @@ static void dce_mi_free_dmif(
 			10, 3500);
 
 	if (dce_mi->wa.single_head_rdreq_dmif_limit) {
-		uint32_t eanble =  (total_stream_num > 1) ? 0 :
+		uint32_t enable =  (total_stream_num > 1) ? 0 :
 				dce_mi->wa.single_head_rdreq_dmif_limit;
 
 		REG_UPDATE(MC_HUB_RDREQ_DMIF_LIMIT,
-				ENABLE, eanble);
+				ENABLE, enable);
 	}
 }
 

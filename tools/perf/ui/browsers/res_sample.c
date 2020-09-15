@@ -7,7 +7,7 @@
 #include "config.h"
 #include "time-utils.h"
 #include "../util.h"
-#include "../../util/util.h"
+#include "../../util/util.h" // perf_exe()
 #include "../../perf.h"
 #include <stdlib.h>
 #include <string.h>
@@ -56,7 +56,7 @@ int res_sample_browse(struct res_sample *res_samples, int num_res,
 			return -1;
 		}
 	}
-	choice = ui__popup_menu(num_res, names);
+	choice = ui__popup_menu(num_res, names, NULL);
 	for (i = 0; i < num_res; i++)
 		zfree(&names[i]);
 	free(names);

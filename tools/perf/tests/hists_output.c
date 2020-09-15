@@ -155,7 +155,7 @@ static int test1(struct evsel *evsel, struct machine *machine)
 		goto out;
 
 	hists__collapse_resort(hists, NULL);
-	perf_evsel__output_resort(evsel, NULL);
+	evsel__output_resort(evsel, NULL);
 
 	if (verbose > 2) {
 		pr_info("[fields = %s, sort = %s]\n", field_order, sort_order);
@@ -255,7 +255,7 @@ static int test2(struct evsel *evsel, struct machine *machine)
 		goto out;
 
 	hists__collapse_resort(hists, NULL);
-	perf_evsel__output_resort(evsel, NULL);
+	evsel__output_resort(evsel, NULL);
 
 	if (verbose > 2) {
 		pr_info("[fields = %s, sort = %s]\n", field_order, sort_order);
@@ -309,7 +309,7 @@ static int test3(struct evsel *evsel, struct machine *machine)
 		goto out;
 
 	hists__collapse_resort(hists, NULL);
-	perf_evsel__output_resort(evsel, NULL);
+	evsel__output_resort(evsel, NULL);
 
 	if (verbose > 2) {
 		pr_info("[fields = %s, sort = %s]\n", field_order, sort_order);
@@ -387,7 +387,7 @@ static int test4(struct evsel *evsel, struct machine *machine)
 		goto out;
 
 	hists__collapse_resort(hists, NULL);
-	perf_evsel__output_resort(evsel, NULL);
+	evsel__output_resort(evsel, NULL);
 
 	if (verbose > 2) {
 		pr_info("[fields = %s, sort = %s]\n", field_order, sort_order);
@@ -490,7 +490,7 @@ static int test5(struct evsel *evsel, struct machine *machine)
 		goto out;
 
 	hists__collapse_resort(hists, NULL);
-	perf_evsel__output_resort(evsel, NULL);
+	evsel__output_resort(evsel, NULL);
 
 	if (verbose > 2) {
 		pr_info("[fields = %s, sort = %s]\n", field_order, sort_order);
@@ -608,7 +608,7 @@ int test__hists_output(struct test *test __maybe_unused, int subtest __maybe_unu
 	if (verbose > 1)
 		machine__fprintf(machine, stderr);
 
-	evsel = perf_evlist__first(evlist);
+	evsel = evlist__first(evlist);
 
 	for (i = 0; i < ARRAY_SIZE(testcases); i++) {
 		err = testcases[i](evsel, machine);

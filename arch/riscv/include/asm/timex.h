@@ -16,17 +16,18 @@ static inline cycles_t get_cycles(void)
 }
 #define get_cycles get_cycles
 
+static inline u32 get_cycles_hi(void)
+{
+	return csr_read(CSR_TIMEH);
+}
+#define get_cycles_hi get_cycles_hi
+
 #ifdef CONFIG_64BIT
 static inline u64 get_cycles64(void)
 {
 	return get_cycles();
 }
 #else /* CONFIG_64BIT */
-static inline u32 get_cycles_hi(void)
-{
-	return csr_read(CSR_TIMEH);
-}
-
 static inline u64 get_cycles64(void)
 {
 	u32 hi, lo;

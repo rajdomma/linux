@@ -2,7 +2,7 @@
 /**
  * opt3001.c - Texas Instruments OPT3001 Light Sensor
  *
- * Copyright (C) 2014 Texas Instruments Incorporated - http://www.ti.com
+ * Copyright (C) 2014 Texas Instruments Incorporated - https://www.ti.com
  *
  * Author: Andreas Dannenberg <dannenberg@ti.com>
  * Based on previous work from: Felipe Balbi <balbi@ti.com>
@@ -16,6 +16,7 @@
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -686,6 +687,7 @@ static irqreturn_t opt3001_irq(int irq, void *_iio)
 	struct iio_dev *iio = _iio;
 	struct opt3001 *opt = iio_priv(iio);
 	int ret;
+	bool wake_result_ready_queue = false;
 
 	if (!opt->ok_to_ignore_lock)
 		mutex_lock(&opt->lock);
@@ -720,12 +722,15 @@ static irqreturn_t opt3001_irq(int irq, void *_iio)
 		}
 		opt->result = ret;
 		opt->result_ready = true;
-		wake_up(&opt->result_ready_queue);
+		wake_result_ready_queue = true;
 	}
 
 out:
 	if (!opt->ok_to_ignore_lock)
 		mutex_unlock(&opt->lock);
+
+	if (wake_result_ready_queue)
+		wake_up(&opt->result_ready_queue);
 
 	return IRQ_HANDLED;
 }
@@ -763,7 +768,6 @@ static int opt3001_probe(struct i2c_client *client,
 	iio->name = client->name;
 	iio->channels = opt3001_channels;
 	iio->num_channels = ARRAY_SIZE(opt3001_channels);
-	iio->dev.parent = dev;
 	iio->modes = INDIO_DIRECT_MODE;
 	iio->info = &opt3001_info;
 
@@ -840,7 +844,7 @@ static struct i2c_driver opt3001_driver = {
 
 	.driver = {
 		.name = "opt3001",
-		.of_match_table = of_match_ptr(opt3001_of_match),
+		.of_match_table = opt3001_of_match,
 	},
 };
 

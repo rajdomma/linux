@@ -858,7 +858,11 @@ struct sctp_chunk *sctp_make_shutdown(const struct sctp_association *asoc,
 	struct sctp_chunk *retval;
 	__u32 ctsn;
 
-	ctsn = sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map);
+	if (chunk && chunk->asoc)
+		ctsn = sctp_tsnmap_get_ctsn(&chunk->asoc->peer.tsn_map);
+	else
+		ctsn = sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map);
+
 	shut.cum_tsn_ack = htonl(ctsn);
 
 	retval = sctp_make_control(asoc, SCTP_CID_SHUTDOWN, 0,
@@ -1666,17 +1670,14 @@ static struct sctp_cookie_param *sctp_pack_cookie(
 	       ntohs(init_chunk->chunk_hdr->length), raw_addrs, addrs_len);
 
 	if (sctp_sk(ep->base.sk)->hmac) {
-		SHASH_DESC_ON_STACK(desc, sctp_sk(ep->base.sk)->hmac);
+		struct crypto_shash *tfm = sctp_sk(ep->base.sk)->hmac;
 		int err;
 
 		/* Sign the message.  */
-		desc->tfm = sctp_sk(ep->base.sk)->hmac;
-
-		err = crypto_shash_setkey(desc->tfm, ep->secret_key,
+		err = crypto_shash_setkey(tfm, ep->secret_key,
 					  sizeof(ep->secret_key)) ?:
-		      crypto_shash_digest(desc, (u8 *)&cookie->c, bodysize,
-					  cookie->signature);
-		shash_desc_zero(desc);
+		      crypto_shash_tfm_digest(tfm, (u8 *)&cookie->c, bodysize,
+					      cookie->signature);
 		if (err)
 			goto free_cookie;
 	}
@@ -1737,17 +1738,13 @@ struct sctp_association *sctp_unpack_cookie(
 
 	/* Check the signature.  */
 	{
-		SHASH_DESC_ON_STACK(desc, sctp_sk(ep->base.sk)->hmac);
+		struct crypto_shash *tfm = sctp_sk(ep->base.sk)->hmac;
 		int err;
 
-		desc->tfm = sctp_sk(ep->base.sk)->hmac;
-
-		err = crypto_shash_setkey(desc->tfm, ep->secret_key,
+		err = crypto_shash_setkey(tfm, ep->secret_key,
 					  sizeof(ep->secret_key)) ?:
-		      crypto_shash_digest(desc, (u8 *)bear_cookie, bodysize,
-					  digest);
-		shash_desc_zero(desc);
-
+		      crypto_shash_tfm_digest(tfm, (u8 *)bear_cookie, bodysize,
+					      digest);
 		if (err) {
 			*error = -SCTP_IERROR_NOMEM;
 			goto fail;
@@ -2080,7 +2077,7 @@ static enum sctp_ierror sctp_process_unk_param(
 		break;
 	case SCTP_PARAM_ACTION_DISCARD_ERR:
 		retval =  SCTP_IERROR_ERROR;
-		/* Fall through */
+		fallthrough;
 	case SCTP_PARAM_ACTION_SKIP_ERR:
 		/* Make an ERROR chunk, preparing enough room for
 		 * returning multiple unknown parameters.
@@ -2155,7 +2152,7 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 	case SCTP_PARAM_SET_PRIMARY:
 		if (ep->asconf_enable)
 			break;
-		goto fallthrough;
+		goto unhandled;
 
 	case SCTP_PARAM_HOST_NAME_ADDRESS:
 		/* Tell the peer, we won't support this param.  */
@@ -2166,11 +2163,11 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 	case SCTP_PARAM_FWD_TSN_SUPPORT:
 		if (ep->prsctp_enable)
 			break;
-		goto fallthrough;
+		goto unhandled;
 
 	case SCTP_PARAM_RANDOM:
 		if (!ep->auth_enable)
-			goto fallthrough;
+			goto unhandled;
 
 		/* SCTP-AUTH: Secion 6.1
 		 * If the random number is not 32 byte long the association
@@ -2187,7 +2184,7 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 
 	case SCTP_PARAM_CHUNKS:
 		if (!ep->auth_enable)
-			goto fallthrough;
+			goto unhandled;
 
 		/* SCTP-AUTH: Section 3.2
 		 * The CHUNKS parameter MUST be included once in the INIT or
@@ -2203,7 +2200,7 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 
 	case SCTP_PARAM_HMAC_ALGO:
 		if (!ep->auth_enable)
-			goto fallthrough;
+			goto unhandled;
 
 		hmacs = (struct sctp_hmac_algo_param *)param.p;
 		n_elt = (ntohs(param.p->length) -
@@ -2226,7 +2223,7 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 			retval = SCTP_IERROR_ABORT;
 		}
 		break;
-fallthrough:
+unhandled:
 	default:
 		pr_debug("%s: unrecognized param:%d for chunk:%d\n",
 			 __func__, ntohs(param.p->type), cid);
@@ -2307,7 +2304,6 @@ int sctp_process_init(struct sctp_association *asoc, struct sctp_chunk *chunk,
 		      const union sctp_addr *peer_addr,
 		      struct sctp_init_chunk *peer_init, gfp_t gfp)
 {
-	struct net *net = sock_net(asoc->base.sk);
 	struct sctp_transport *transport;
 	struct list_head *pos, *temp;
 	union sctp_params param;
@@ -2363,8 +2359,8 @@ int sctp_process_init(struct sctp_association *asoc, struct sctp_chunk *chunk,
 	 * also give us an option to silently ignore the packet, which
 	 * is what we'll do here.
 	 */
-	if (!net->sctp.addip_noauth &&
-	     (asoc->peer.asconf_capable && !asoc->peer.auth_capable)) {
+	if (!asoc->base.net->sctp.addip_noauth &&
+	    (asoc->peer.asconf_capable && !asoc->peer.auth_capable)) {
 		asoc->peer.addip_disabled_mask |= (SCTP_PARAM_ADD_IP |
 						  SCTP_PARAM_DEL_IP |
 						  SCTP_PARAM_SET_PRIMARY);
@@ -2491,9 +2487,9 @@ static int sctp_process_param(struct sctp_association *asoc,
 			      const union sctp_addr *peer_addr,
 			      gfp_t gfp)
 {
-	struct net *net = sock_net(asoc->base.sk);
 	struct sctp_endpoint *ep = asoc->ep;
 	union sctp_addr_param *addr_param;
+	struct net *net = asoc->base.net;
 	struct sctp_transport *t;
 	enum sctp_scope scope;
 	union sctp_addr addr;

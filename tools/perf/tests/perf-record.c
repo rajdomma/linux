@@ -6,11 +6,13 @@
 #include <pthread.h>
 
 #include <sched.h>
+#include <perf/mmap.h>
 #include "evlist.h"
 #include "evsel.h"
 #include "debug.h"
 #include "record.h"
 #include "tests.h"
+#include "util/mmap.h"
 
 static int sched__get_first_possible_cpu(pid_t pid, cpu_set_t *maskp)
 {
@@ -103,10 +105,10 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 	/*
 	 * Config the evsels, setting attr->comm on the first one, etc.
 	 */
-	evsel = perf_evlist__first(evlist);
-	perf_evsel__set_sample_bit(evsel, CPU);
-	perf_evsel__set_sample_bit(evsel, TID);
-	perf_evsel__set_sample_bit(evsel, TIME);
+	evsel = evlist__first(evlist);
+	evsel__set_sample_bit(evsel, CPU);
+	evsel__set_sample_bit(evsel, TID);
+	evsel__set_sample_bit(evsel, TIME);
 	perf_evlist__config(evlist, &opts, NULL);
 
 	err = sched__get_first_possible_cpu(evlist->workload.pid, &cpu_mask);
@@ -143,9 +145,9 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 	 * fds in the same CPU to be injected in the same mmap ring buffer
 	 * (using ioctl(PERF_EVENT_IOC_SET_OUTPUT)).
 	 */
-	err = perf_evlist__mmap(evlist, opts.mmap_pages);
+	err = evlist__mmap(evlist, opts.mmap_pages);
 	if (err < 0) {
-		pr_debug("perf_evlist__mmap: %s\n",
+		pr_debug("evlist__mmap: %s\n",
 			 str_error_r(errno, sbuf, sizeof(sbuf)));
 		goto out_delete_evlist;
 	}
@@ -164,15 +166,15 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 	while (1) {
 		int before = total_events;
 
-		for (i = 0; i < evlist->nr_mmaps; i++) {
+		for (i = 0; i < evlist->core.nr_mmaps; i++) {
 			union perf_event *event;
-			struct perf_mmap *md;
+			struct mmap *md;
 
 			md = &evlist->mmap[i];
-			if (perf_mmap__read_init(md) < 0)
+			if (perf_mmap__read_init(&md->core) < 0)
 				continue;
 
-			while ((event = perf_mmap__read_event(md)) != NULL) {
+			while ((event = perf_mmap__read_event(&md->core)) != NULL) {
 				const u32 type = event->header.type;
 				const char *name = perf_event__name(type);
 
@@ -183,14 +185,14 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 				err = perf_evlist__parse_sample(evlist, event, &sample);
 				if (err < 0) {
 					if (verbose > 0)
-						perf_event__fprintf(event, stderr);
+						perf_event__fprintf(event, NULL, stderr);
 					pr_debug("Couldn't parse sample\n");
 					goto out_delete_evlist;
 				}
 
 				if (verbose > 0) {
 					pr_info("%" PRIu64" %d ", sample.time, sample.cpu);
-					perf_event__fprintf(event, stderr);
+					perf_event__fprintf(event, NULL, stderr);
 				}
 
 				if (prev_time > sample.time) {
@@ -275,9 +277,9 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 					++errs;
 				}
 
-				perf_mmap__consume(md);
+				perf_mmap__consume(&md->core);
 			}
-			perf_mmap__read_done(md);
+			perf_mmap__read_done(&md->core);
 		}
 
 		/*
@@ -286,7 +288,7 @@ int test__PERF_RECORD(struct test *test __maybe_unused, int subtest __maybe_unus
 		 * perf_event_attr.wakeup_events, just PERF_EVENT_SAMPLE does.
 		 */
 		if (total_events == before && false)
-			perf_evlist__poll(evlist, -1);
+			evlist__poll(evlist, -1);
 
 		sleep(1);
 		if (++wakeups > 5) {

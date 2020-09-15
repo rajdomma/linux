@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <sys/ttydefaults.h>
 
-#include "../../util/debug.h"
 #include "../browser.h"
 #include "../keysyms.h"
 #include "../helpline.h"
@@ -24,7 +23,7 @@ static void ui_browser__argv_write(struct ui_browser *browser,
 	ui_browser__write_nstring(browser, *arg, browser->width);
 }
 
-static int popup_menu__run(struct ui_browser *menu)
+static int popup_menu__run(struct ui_browser *menu, int *keyp)
 {
 	int key;
 
@@ -46,6 +45,11 @@ static int popup_menu__run(struct ui_browser *menu)
 			key = -1;
 			break;
 		default:
+			if (keyp) {
+				*keyp = key;
+				key = menu->nr_entries;
+				break;
+			}
 			continue;
 		}
 
@@ -56,7 +60,7 @@ static int popup_menu__run(struct ui_browser *menu)
 	return key;
 }
 
-int ui__popup_menu(int argc, char * const argv[])
+int ui__popup_menu(int argc, char * const argv[], int *keyp)
 {
 	struct ui_browser menu = {
 		.entries    = (void *)argv,
@@ -65,8 +69,7 @@ int ui__popup_menu(int argc, char * const argv[])
 		.write	    = ui_browser__argv_write,
 		.nr_entries = argc,
 	};
-
-	return popup_menu__run(&menu);
+	return popup_menu__run(&menu, keyp);
 }
 
 int ui_browser__input_window(const char *title, const char *text, char *input,

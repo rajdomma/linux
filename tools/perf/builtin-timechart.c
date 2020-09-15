@@ -35,6 +35,7 @@
 #include "util/tool.h"
 #include "util/data.h"
 #include "util/debug.h"
+#include <linux/err.h>
 
 #ifdef LACKS_OPEN_MEMSTREAM_PROTOTYPE
 FILE *open_memstream(char **ptr, size_t *sizeloc);
@@ -127,7 +128,7 @@ struct sample_wrapper {
 	struct sample_wrapper *next;
 
 	u64		timestamp;
-	unsigned char	data[0];
+	unsigned char	data[];
 };
 
 #define TYPE_NONE	0
@@ -578,8 +579,8 @@ process_sample_cpu_idle(struct timechart *tchart __maybe_unused,
 			struct perf_sample *sample,
 			const char *backtrace __maybe_unused)
 {
-	u32 state = perf_evsel__intval(evsel, sample, "state");
-	u32 cpu_id = perf_evsel__intval(evsel, sample, "cpu_id");
+	u32 state  = evsel__intval(evsel, sample, "state");
+	u32 cpu_id = evsel__intval(evsel, sample, "cpu_id");
 
 	if (state == (u32)PWR_EVENT_EXIT)
 		c_state_end(tchart, cpu_id, sample->time);
@@ -594,8 +595,8 @@ process_sample_cpu_frequency(struct timechart *tchart,
 			     struct perf_sample *sample,
 			     const char *backtrace __maybe_unused)
 {
-	u32 state = perf_evsel__intval(evsel, sample, "state");
-	u32 cpu_id = perf_evsel__intval(evsel, sample, "cpu_id");
+	u32 state  = evsel__intval(evsel, sample, "state");
+	u32 cpu_id = evsel__intval(evsel, sample, "cpu_id");
 
 	p_state_change(tchart, cpu_id, sample->time, state);
 	return 0;
@@ -607,9 +608,9 @@ process_sample_sched_wakeup(struct timechart *tchart,
 			    struct perf_sample *sample,
 			    const char *backtrace)
 {
-	u8 flags = perf_evsel__intval(evsel, sample, "common_flags");
-	int waker = perf_evsel__intval(evsel, sample, "common_pid");
-	int wakee = perf_evsel__intval(evsel, sample, "pid");
+	u8 flags  = evsel__intval(evsel, sample, "common_flags");
+	int waker = evsel__intval(evsel, sample, "common_pid");
+	int wakee = evsel__intval(evsel, sample, "pid");
 
 	sched_wakeup(tchart, sample->cpu, sample->time, waker, wakee, flags, backtrace);
 	return 0;
@@ -621,9 +622,9 @@ process_sample_sched_switch(struct timechart *tchart,
 			    struct perf_sample *sample,
 			    const char *backtrace)
 {
-	int prev_pid = perf_evsel__intval(evsel, sample, "prev_pid");
-	int next_pid = perf_evsel__intval(evsel, sample, "next_pid");
-	u64 prev_state = perf_evsel__intval(evsel, sample, "prev_state");
+	int prev_pid   = evsel__intval(evsel, sample, "prev_pid");
+	int next_pid   = evsel__intval(evsel, sample, "next_pid");
+	u64 prev_state = evsel__intval(evsel, sample, "prev_state");
 
 	sched_switch(tchart, sample->cpu, sample->time, prev_pid, next_pid,
 		     prev_state, backtrace);
@@ -637,8 +638,8 @@ process_sample_power_start(struct timechart *tchart __maybe_unused,
 			   struct perf_sample *sample,
 			   const char *backtrace __maybe_unused)
 {
-	u64 cpu_id = perf_evsel__intval(evsel, sample, "cpu_id");
-	u64 value = perf_evsel__intval(evsel, sample, "value");
+	u64 cpu_id = evsel__intval(evsel, sample, "cpu_id");
+	u64 value  = evsel__intval(evsel, sample, "value");
 
 	c_state_start(cpu_id, sample->time, value);
 	return 0;
@@ -660,8 +661,8 @@ process_sample_power_frequency(struct timechart *tchart,
 			       struct perf_sample *sample,
 			       const char *backtrace __maybe_unused)
 {
-	u64 cpu_id = perf_evsel__intval(evsel, sample, "cpu_id");
-	u64 value = perf_evsel__intval(evsel, sample, "value");
+	u64 cpu_id = evsel__intval(evsel, sample, "cpu_id");
+	u64 value  = evsel__intval(evsel, sample, "value");
 
 	p_state_change(tchart, cpu_id, sample->time, value);
 	return 0;
@@ -842,7 +843,7 @@ process_enter_read(struct timechart *tchart,
 		   struct evsel *evsel,
 		   struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_READ,
 				   sample->time, fd);
 }
@@ -852,7 +853,7 @@ process_exit_read(struct timechart *tchart,
 		  struct evsel *evsel,
 		  struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_READ,
 				 sample->time, ret);
 }
@@ -862,7 +863,7 @@ process_enter_write(struct timechart *tchart,
 		    struct evsel *evsel,
 		    struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_WRITE,
 				   sample->time, fd);
 }
@@ -872,7 +873,7 @@ process_exit_write(struct timechart *tchart,
 		   struct evsel *evsel,
 		   struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_WRITE,
 				 sample->time, ret);
 }
@@ -882,7 +883,7 @@ process_enter_sync(struct timechart *tchart,
 		   struct evsel *evsel,
 		   struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_SYNC,
 				   sample->time, fd);
 }
@@ -892,7 +893,7 @@ process_exit_sync(struct timechart *tchart,
 		  struct evsel *evsel,
 		  struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_SYNC,
 				 sample->time, ret);
 }
@@ -902,7 +903,7 @@ process_enter_tx(struct timechart *tchart,
 		 struct evsel *evsel,
 		 struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_TX,
 				   sample->time, fd);
 }
@@ -912,7 +913,7 @@ process_exit_tx(struct timechart *tchart,
 		struct evsel *evsel,
 		struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_TX,
 				 sample->time, ret);
 }
@@ -922,7 +923,7 @@ process_enter_rx(struct timechart *tchart,
 		 struct evsel *evsel,
 		 struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_RX,
 				   sample->time, fd);
 }
@@ -932,7 +933,7 @@ process_exit_rx(struct timechart *tchart,
 		struct evsel *evsel,
 		struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_RX,
 				 sample->time, ret);
 }
@@ -942,7 +943,7 @@ process_enter_poll(struct timechart *tchart,
 		   struct evsel *evsel,
 		   struct perf_sample *sample)
 {
-	long fd = perf_evsel__intval(evsel, sample, "fd");
+	long fd = evsel__intval(evsel, sample, "fd");
 	return pid_begin_io_sample(tchart, sample->tid, IOTYPE_POLL,
 				   sample->time, fd);
 }
@@ -952,7 +953,7 @@ process_exit_poll(struct timechart *tchart,
 		  struct evsel *evsel,
 		  struct perf_sample *sample)
 {
-	long ret = perf_evsel__intval(evsel, sample, "ret");
+	long ret = evsel__intval(evsel, sample, "ret");
 	return pid_end_io_sample(tchart, sample->tid, IOTYPE_POLL,
 				 sample->time, ret);
 }
@@ -1601,8 +1602,8 @@ static int __cmd_timechart(struct timechart *tchart, const char *output_name)
 							 &tchart->tool);
 	int ret = -EINVAL;
 
-	if (session == NULL)
-		return -1;
+	if (IS_ERR(session))
+		return PTR_ERR(session);
 
 	symbol__init(&session->header.env);
 

@@ -95,8 +95,8 @@ static inline bool elv_support_features(unsigned int elv_features,
  * @name: Elevator name to test
  * @required_features: Features that the elevator must provide
  *
- * Return true is the elevator @e name matches @name and if @e provides all the
- * the feratures spcified by @required_features.
+ * Return true if the elevator @e name matches @name and if @e provides all
+ * the features specified by @required_features.
  */
 static bool elevator_match(const struct elevator_type *e, const char *name,
 			   unsigned int required_features)
@@ -503,9 +503,7 @@ int elv_register_queue(struct request_queue *q, bool uevent)
 		if (uevent)
 			kobject_uevent(&e->kobj, KOBJ_ADD);
 
-		mutex_lock(&q->sysfs_lock);
 		e->registered = 1;
-		mutex_unlock(&q->sysfs_lock);
 	}
 	return error;
 }
@@ -523,11 +521,9 @@ void elv_unregister_queue(struct request_queue *q)
 		kobject_uevent(&e->kobj, KOBJ_REMOVE);
 		kobject_del(&e->kobj);
 
-		mutex_lock(&q->sysfs_lock);
 		e->registered = 0;
 		/* Re-enable throttling in case elevator disabled it */
 		wbt_enable_default(q);
-		mutex_unlock(&q->sysfs_lock);
 	}
 }
 
@@ -590,32 +586,11 @@ int elevator_switch_mq(struct request_queue *q,
 	lockdep_assert_held(&q->sysfs_lock);
 
 	if (q->elevator) {
-		if (q->elevator->registered) {
-			mutex_unlock(&q->sysfs_lock);
-
-			/*
-			 * Concurrent elevator switch can't happen becasue
-			 * sysfs write is always exclusively on same file.
-			 *
-			 * Also the elevator queue won't be freed after
-			 * sysfs_lock is released becasue kobject_del() in
-			 * blk_unregister_queue() waits for completion of
-			 * .store & .show on its attributes.
-			 */
+		if (q->elevator->registered)
 			elv_unregister_queue(q);
 
-			mutex_lock(&q->sysfs_lock);
-		}
 		ioc_clear_queue(q);
 		elevator_exit(q, q->elevator);
-
-		/*
-		 * sysfs_lock may be dropped, so re-check if queue is
-		 * unregistered. If yes, don't switch to new elevator
-		 * any more
-		 */
-		if (!blk_queue_registered(q))
-			return 0;
 	}
 
 	ret = blk_mq_init_sched(q, new_e);
@@ -623,11 +598,7 @@ int elevator_switch_mq(struct request_queue *q,
 		goto out;
 
 	if (new_e) {
-		mutex_unlock(&q->sysfs_lock);
-
 		ret = elv_register_queue(q, true);
-
-		mutex_lock(&q->sysfs_lock);
 		if (ret) {
 			elevator_exit(q, q->elevator);
 			goto out;
@@ -645,7 +616,8 @@ out:
 
 static inline bool elv_support_iosched(struct request_queue *q)
 {
-	if (q->tag_set && (q->tag_set->flags & BLK_MQ_F_NO_SCHED))
+	if (!q->mq_ops ||
+	    (q->tag_set && (q->tag_set->flags & BLK_MQ_F_NO_SCHED)))
 		return false;
 	return true;
 }
@@ -860,3 +832,12 @@ struct request *elv_rb_latter_request(struct request_queue *q,
 	return NULL;
 }
 EXPORT_SYMBOL(elv_rb_latter_request);
+
+static int __init elevator_setup(char *str)
+{
+	pr_warn("Kernel parameter elevator= does not have any effect anymore.\n"
+		"Please use sysfs to set IO scheduler for individual devices.\n");
+	return 1;
+}
+
+__setup("elevator=", elevator_setup);

@@ -102,12 +102,13 @@ static int scmi_reset_probe(struct scmi_device *sdev)
 	data->rcdev.owner = THIS_MODULE;
 	data->rcdev.of_node = np;
 	data->rcdev.nr_resets = handle->reset_ops->num_domains_get(handle);
+	data->handle = handle;
 
 	return devm_reset_controller_register(dev, &data->rcdev);
 }
 
 static const struct scmi_device_id scmi_id_table[] = {
-	{ SCMI_PROTOCOL_RESET },
+	{ SCMI_PROTOCOL_RESET, "reset" },
 	{ },
 };
 MODULE_DEVICE_TABLE(scmi, scmi_id_table);

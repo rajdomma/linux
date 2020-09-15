@@ -59,6 +59,85 @@ void rxrpc_notify_socket(struct rxrpc_call *call)
 }
 
 /*
+ * Transition a call to the complete state.
+ */
+bool __rxrpc_set_call_completion(struct rxrpc_call *call,
+				 enum rxrpc_call_completion compl,
+				 u32 abort_code,
+				 int error)
+{
+	if (call->state < RXRPC_CALL_COMPLETE) {
+		call->abort_code = abort_code;
+		call->error = error;
+		call->completion = compl,
+		call->state = RXRPC_CALL_COMPLETE;
+		trace_rxrpc_call_complete(call);
+		wake_up(&call->waitq);
+		rxrpc_notify_socket(call);
+		return true;
+	}
+	return false;
+}
+
+bool rxrpc_set_call_completion(struct rxrpc_call *call,
+			       enum rxrpc_call_completion compl,
+			       u32 abort_code,
+			       int error)
+{
+	bool ret = false;
+
+	if (call->state < RXRPC_CALL_COMPLETE) {
+		write_lock_bh(&call->state_lock);
+		ret = __rxrpc_set_call_completion(call, compl, abort_code, error);
+		write_unlock_bh(&call->state_lock);
+	}
+	return ret;
+}
+
+/*
+ * Record that a call successfully completed.
+ */
+bool __rxrpc_call_completed(struct rxrpc_call *call)
+{
+	return __rxrpc_set_call_completion(call, RXRPC_CALL_SUCCEEDED, 0, 0);
+}
+
+bool rxrpc_call_completed(struct rxrpc_call *call)
+{
+	bool ret = false;
+
+	if (call->state < RXRPC_CALL_COMPLETE) {
+		write_lock_bh(&call->state_lock);
+		ret = __rxrpc_call_completed(call);
+		write_unlock_bh(&call->state_lock);
+	}
+	return ret;
+}
+
+/*
+ * Record that a call is locally aborted.
+ */
+bool __rxrpc_abort_call(const char *why, struct rxrpc_call *call,
+			rxrpc_seq_t seq, u32 abort_code, int error)
+{
+	trace_rxrpc_abort(call->debug_id, why, call->cid, call->call_id, seq,
+			  abort_code, error);
+	return __rxrpc_set_call_completion(call, RXRPC_CALL_LOCALLY_ABORTED,
+					   abort_code, error);
+}
+
+bool rxrpc_abort_call(const char *why, struct rxrpc_call *call,
+		      rxrpc_seq_t seq, u32 abort_code, int error)
+{
+	bool ret;
+
+	write_lock_bh(&call->state_lock);
+	ret = __rxrpc_abort_call(why, call, seq, abort_code, error);
+	write_unlock_bh(&call->state_lock);
+	return ret;
+}
+
+/*
  * Pass a call terminating message to userspace.
  */
 static int rxrpc_recvmsg_term(struct rxrpc_call *call, struct msghdr *msg)
@@ -251,8 +330,8 @@ static int rxrpc_verify_packet(struct rxrpc_call *call, struct sk_buff *skb,
 		seq += subpacket;
 	}
 
-	return call->conn->security->verify_packet(call, skb, offset, len,
-						   seq, cksum);
+	return call->security->verify_packet(call, skb, offset, len,
+					     seq, cksum);
 }
 
 /*
@@ -267,11 +346,13 @@ static int rxrpc_verify_packet(struct rxrpc_call *call, struct sk_buff *skb,
  */
 static int rxrpc_locate_data(struct rxrpc_call *call, struct sk_buff *skb,
 			     u8 *_annotation,
-			     unsigned int *_offset, unsigned int *_len)
+			     unsigned int *_offset, unsigned int *_len,
+			     bool *_last)
 {
 	struct rxrpc_skb_priv *sp = rxrpc_skb(skb);
 	unsigned int offset = sizeof(struct rxrpc_wire_header);
 	unsigned int len;
+	bool last = false;
 	int ret;
 	u8 annotation = *_annotation;
 	u8 subpacket = annotation & RXRPC_RX_ANNO_SUBPACKET;
@@ -281,6 +362,8 @@ static int rxrpc_locate_data(struct rxrpc_call *call, struct sk_buff *skb,
 	len = skb->len - offset;
 	if (subpacket < sp->nr_subpackets - 1)
 		len = RXRPC_JUMBO_DATALEN;
+	else if (sp->rx_flags & RXRPC_SKB_INCL_LAST)
+		last = true;
 
 	if (!(annotation & RXRPC_RX_ANNO_VERIFIED)) {
 		ret = rxrpc_verify_packet(call, skb, annotation, offset, len);
@@ -291,7 +374,8 @@ static int rxrpc_locate_data(struct rxrpc_call *call, struct sk_buff *skb,
 
 	*_offset = offset;
 	*_len = len;
-	call->conn->security->locate_data(call, skb, _offset, _len);
+	*_last = last;
+	call->security->locate_data(call, skb, _offset, _len);
 	return 0;
 }
 
@@ -309,7 +393,7 @@ static int rxrpc_recvmsg_data(struct socket *sock, struct rxrpc_call *call,
 	rxrpc_serial_t serial;
 	rxrpc_seq_t hard_ack, top, seq;
 	size_t remain;
-	bool last;
+	bool rx_pkt_last;
 	unsigned int rx_pkt_offset, rx_pkt_len;
 	int ix, copy, ret = -EAGAIN, ret2;
 
@@ -319,6 +403,7 @@ static int rxrpc_recvmsg_data(struct socket *sock, struct rxrpc_call *call,
 
 	rx_pkt_offset = call->rx_pkt_offset;
 	rx_pkt_len = call->rx_pkt_len;
+	rx_pkt_last = call->rx_pkt_last;
 
 	if (call->state >= RXRPC_CALL_SERVER_ACK_REQUEST) {
 		seq = call->rx_hard_ack;
@@ -329,6 +414,7 @@ static int rxrpc_recvmsg_data(struct socket *sock, struct rxrpc_call *call,
 	/* Barriers against rxrpc_input_data(). */
 	hard_ack = call->rx_hard_ack;
 	seq = hard_ack + 1;
+
 	while (top = smp_load_acquire(&call->rx_top),
 	       before_eq(seq, top)
 	       ) {
@@ -356,7 +442,8 @@ static int rxrpc_recvmsg_data(struct socket *sock, struct rxrpc_call *call,
 		if (rx_pkt_offset == 0) {
 			ret2 = rxrpc_locate_data(call, skb,
 						 &call->rxtx_annotations[ix],
-						 &rx_pkt_offset, &rx_pkt_len);
+						 &rx_pkt_offset, &rx_pkt_len,
+						 &rx_pkt_last);
 			trace_rxrpc_recvmsg(call, rxrpc_recvmsg_next, seq,
 					    rx_pkt_offset, rx_pkt_len, ret2);
 			if (ret2 < 0) {
@@ -396,13 +483,12 @@ static int rxrpc_recvmsg_data(struct socket *sock, struct rxrpc_call *call,
 		}
 
 		/* The whole packet has been transferred. */
-		last = sp->hdr.flags & RXRPC_LAST_PACKET;
 		if (!(flags & MSG_PEEK))
 			rxrpc_rotate_rx_window(call);
 		rx_pkt_offset = 0;
 		rx_pkt_len = 0;
 
-		if (last) {
+		if (rx_pkt_last) {
 			ASSERTCMP(seq, ==, READ_ONCE(call->rx_top));
 			ret = 1;
 			goto out;
@@ -415,6 +501,7 @@ out:
 	if (!(flags & MSG_PEEK)) {
 		call->rx_pkt_offset = rx_pkt_offset;
 		call->rx_pkt_len = rx_pkt_len;
+		call->rx_pkt_last = rx_pkt_last;
 	}
 done:
 	trace_rxrpc_recvmsg(call, rxrpc_recvmsg_data_return, seq,
@@ -456,7 +543,7 @@ try_again:
 	    list_empty(&rx->recvmsg_q) &&
 	    rx->sk.sk_state != RXRPC_SERVER_LISTENING) {
 		release_sock(&rx->sk);
-		return -ENODATA;
+		return -EAGAIN;
 	}
 
 	if (list_empty(&rx->recvmsg_q)) {
@@ -533,7 +620,7 @@ try_again:
 			goto error_unlock_call;
 	}
 
-	if (msg->msg_name) {
+	if (msg->msg_name && call->peer) {
 		struct sockaddr_rxrpc *srx = msg->msg_name;
 		size_t len = sizeof(call->peer->srx);
 
@@ -689,7 +776,7 @@ out:
 	case RXRPC_ACK_DELAY:
 		if (ret != -EAGAIN)
 			break;
-		/* Fall through */
+		fallthrough;
 	default:
 		rxrpc_send_ack_packet(call, false, NULL);
 	}

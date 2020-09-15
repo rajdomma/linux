@@ -25,4 +25,9 @@
 
 extern void renoir_set_ppt_funcs(struct smu_context *smu);
 
+/* UMD PState Renoir Msg Parameters in MHz */
+#define RENOIR_UMD_PSTATE_GFXCLK       700
+#define RENOIR_UMD_PSTATE_SOCCLK       678
+#define RENOIR_UMD_PSTATE_FCLK         800
+
 #endif

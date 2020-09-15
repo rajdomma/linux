@@ -79,7 +79,7 @@ static long tce_iommu_mm_set(struct tce_container *container)
 	}
 	BUG_ON(!current->mm);
 	container->mm = current->mm;
-	atomic_inc(&container->mm->mm_count);
+	mmgrab(container->mm);
 
 	return 0;
 }
@@ -176,13 +176,13 @@ put_exit:
 }
 
 static bool tce_page_is_contained(struct mm_struct *mm, unsigned long hpa,
-		unsigned int page_shift)
+		unsigned int it_page_shift)
 {
 	struct page *page;
 	unsigned long size = 0;
 
-	if (mm_iommu_is_devmem(mm, hpa, page_shift, &size))
-		return size == (1UL << page_shift);
+	if (mm_iommu_is_devmem(mm, hpa, it_page_shift, &size))
+		return size == (1UL << it_page_shift);
 
 	page = pfn_to_page(hpa >> PAGE_SHIFT);
 	/*
@@ -190,7 +190,7 @@ static bool tce_page_is_contained(struct mm_struct *mm, unsigned long hpa,
 	 * a page we just found. Otherwise the hardware can get access to
 	 * a bigger memory chunk that it should.
 	 */
-	return (PAGE_SHIFT + compound_order(compound_head(page))) >= page_shift;
+	return page_shift(compound_head(page)) >= it_page_shift;
 }
 
 static inline bool tce_groups_attached(struct tce_container *container)
@@ -383,7 +383,7 @@ static void tce_iommu_unuse_page(struct tce_container *container,
 	struct page *page;
 
 	page = pfn_to_page(hpa >> PAGE_SHIFT);
-	put_page(page);
+	unpin_user_page(page);
 }
 
 static int tce_iommu_prereg_ua_to_hpa(struct tce_container *container,
@@ -486,7 +486,7 @@ static int tce_iommu_use_page(unsigned long tce, unsigned long *hpa)
 	struct page *page = NULL;
 	enum dma_data_direction direction = iommu_tce_direction(tce);
 
-	if (get_user_pages_fast(tce & PAGE_MASK, 1,
+	if (pin_user_pages_fast(tce & PAGE_MASK, 1,
 			direction != DMA_TO_DEVICE ? FOLL_WRITE : 0,
 			&page) != 1)
 		return -EFAULT;

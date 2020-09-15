@@ -34,12 +34,21 @@
 #include <linux/notifier.h>
 #include <linux/uaccess.h>
 #include <linux/gfp.h>
+#include <linux/security.h>
 
 #include <asm/cpufeature.h>
 #include <asm/msr.h>
 
 static struct class *msr_class;
 static enum cpuhp_state cpuhp_msr_state;
+
+enum allow_write_msrs {
+	MSR_WRITES_ON,
+	MSR_WRITES_OFF,
+	MSR_WRITES_DEFAULT,
+};
+
+static enum allow_write_msrs allow_writes = MSR_WRITES_DEFAULT;
 
 static ssize_t msr_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
@@ -69,6 +78,24 @@ static ssize_t msr_read(struct file *file, char __user *buf,
 	return bytes ? bytes : err;
 }
 
+static int filter_write(u32 reg)
+{
+	switch (allow_writes) {
+	case MSR_WRITES_ON:  return 0;
+	case MSR_WRITES_OFF: return -EPERM;
+	default: break;
+	}
+
+	if (reg == MSR_IA32_ENERGY_PERF_BIAS)
+		return 0;
+
+	pr_err_ratelimited("Write to unrecognized MSR 0x%x by %s\n"
+			   "Please report to x86@kernel.org\n",
+			   reg, current->comm);
+
+	return 0;
+}
+
 static ssize_t msr_write(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
@@ -79,6 +106,14 @@ static ssize_t msr_write(struct file *file, const char __user *buf,
 	int err = 0;
 	ssize_t bytes = 0;
 
+	err = security_locked_down(LOCKDOWN_MSR);
+	if (err)
+		return err;
+
+	err = filter_write(reg);
+	if (err)
+		return err;
+
 	if (count % 8)
 		return -EINVAL;	/* Invalid chunk size */
 
@@ -87,9 +122,13 @@ static ssize_t msr_write(struct file *file, const char __user *buf,
 			err = -EFAULT;
 			break;
 		}
+
+		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+
 		err = wrmsr_safe_on_cpu(cpu, reg, data[0], data[1]);
 		if (err)
 			break;
+
 		tmp += 2;
 		bytes += 8;
 	}
@@ -130,6 +169,9 @@ static long msr_ioctl(struct file *file, unsigned int ioc, unsigned long arg)
 			err = -EFAULT;
 			break;
 		}
+		err = security_locked_down(LOCKDOWN_MSR);
+		if (err)
+			break;
 		err = wrmsr_safe_regs_on_cpu(cpu, regs);
 		if (err)
 			break;
@@ -233,6 +275,41 @@ static void __exit msr_exit(void)
 	__unregister_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr");
 }
 module_exit(msr_exit)
+
+static int set_allow_writes(const char *val, const struct kernel_param *cp)
+{
+	/* val is NUL-terminated, see kernfs_fop_write() */
+	char *s = strstrip((char *)val);
+
+	if (!strcmp(s, "on"))
+		allow_writes = MSR_WRITES_ON;
+	else if (!strcmp(s, "off"))
+		allow_writes = MSR_WRITES_OFF;
+	else
+		allow_writes = MSR_WRITES_DEFAULT;
+
+	return 0;
+}
+
+static int get_allow_writes(char *buf, const struct kernel_param *kp)
+{
+	const char *res;
+
+	switch (allow_writes) {
+	case MSR_WRITES_ON:  res = "on"; break;
+	case MSR_WRITES_OFF: res = "off"; break;
+	default: res = "default"; break;
+	}
+
+	return sprintf(buf, "%s\n", res);
+}
+
+static const struct kernel_param_ops allow_writes_ops = {
+	.set = set_allow_writes,
+	.get = get_allow_writes
+};
+
+module_param_cb(allow_writes, &allow_writes_ops, NULL, 0600);
 
 MODULE_AUTHOR("H. Peter Anvin <hpa@zytor.com>");
 MODULE_DESCRIPTION("x86 generic MSR driver");

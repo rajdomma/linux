@@ -6,17 +6,17 @@
 #include <linux/err.h>
 #include <perf/cpumap.h>
 #include <traceevent/event-parse.h>
-#include "debug.h"
+#include <perf/mmap.h>
 #include "evlist.h"
 #include "callchain.h"
 #include "evsel.h"
 #include "event.h"
-#include "cpumap.h"
 #include "print_binary.h"
 #include "thread_map.h"
 #include "trace-event.h"
 #include "mmap.h"
-#include "util.h"
+#include "util/env.h"
+#include <internal/lib.h>
 #include "../perf-sys.h"
 
 #if PY_MAJOR_VERSION < 3
@@ -56,10 +56,18 @@ int parse_callchain_record(const char *arg __maybe_unused,
 }
 
 /*
+ * Add this one here not to drag util/env.c
+ */
+struct perf_env perf_env;
+
+/*
  * Support debug printing even though util/debug.c is not linked.  That means
  * implementing 'verbose' and 'eprintf'.
  */
 int verbose;
+int debug_peo_args;
+
+int eprintf(int level, int var, const char *fmt, ...);
 
 int eprintf(int level, int var, const char *fmt, ...)
 {
@@ -793,7 +801,7 @@ static int pyrf_evsel__init(struct pyrf_evsel *pevsel,
 
 static void pyrf_evsel__delete(struct pyrf_evsel *pevsel)
 {
-	perf_evsel__exit(&pevsel->evsel);
+	evsel__exit(&pevsel->evsel);
 	Py_TYPE(pevsel)->tp_free((PyObject*)pevsel);
 }
 
@@ -884,7 +892,7 @@ static int pyrf_evlist__init(struct pyrf_evlist *pevlist,
 
 static void pyrf_evlist__delete(struct pyrf_evlist *pevlist)
 {
-	perf_evlist__exit(&pevlist->evlist);
+	evlist__exit(&pevlist->evlist);
 	Py_TYPE(pevlist)->tp_free((PyObject*)pevlist);
 }
 
@@ -899,7 +907,7 @@ static PyObject *pyrf_evlist__mmap(struct pyrf_evlist *pevlist,
 					 &pages, &overwrite))
 		return NULL;
 
-	if (perf_evlist__mmap(evlist, pages) < 0) {
+	if (evlist__mmap(evlist, pages) < 0) {
 		PyErr_SetFromErrno(PyExc_OSError);
 		return NULL;
 	}
@@ -918,7 +926,7 @@ static PyObject *pyrf_evlist__poll(struct pyrf_evlist *pevlist,
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|i", kwlist, &timeout))
 		return NULL;
 
-	n = perf_evlist__poll(evlist, timeout);
+	n = evlist__poll(evlist, timeout);
 	if (n < 0) {
 		PyErr_SetFromErrno(PyExc_OSError);
 		return NULL;
@@ -935,17 +943,17 @@ static PyObject *pyrf_evlist__get_pollfd(struct pyrf_evlist *pevlist,
         PyObject *list = PyList_New(0);
 	int i;
 
-	for (i = 0; i < evlist->pollfd.nr; ++i) {
+	for (i = 0; i < evlist->core.pollfd.nr; ++i) {
 		PyObject *file;
 #if PY_MAJOR_VERSION < 3
-		FILE *fp = fdopen(evlist->pollfd.entries[i].fd, "r");
+		FILE *fp = fdopen(evlist->core.pollfd.entries[i].fd, "r");
 
 		if (fp == NULL)
 			goto free_list;
 
 		file = PyFile_FromFile(fp, "perf", "r", NULL);
 #else
-		file = PyFile_FromFd(evlist->pollfd.entries[i].fd, "perf", "r", -1,
+		file = PyFile_FromFd(evlist->core.pollfd.entries[i].fd, "perf", "r", -1,
 				     NULL, NULL, NULL, 0);
 #endif
 		if (file == NULL)
@@ -984,14 +992,14 @@ static PyObject *pyrf_evlist__add(struct pyrf_evlist *pevlist,
 	return Py_BuildValue("i", evlist->core.nr_entries);
 }
 
-static struct perf_mmap *get_md(struct evlist *evlist, int cpu)
+static struct mmap *get_md(struct evlist *evlist, int cpu)
 {
 	int i;
 
-	for (i = 0; i < evlist->nr_mmaps; i++) {
-		struct perf_mmap *md = &evlist->mmap[i];
+	for (i = 0; i < evlist->core.nr_mmaps; i++) {
+		struct mmap *md = &evlist->mmap[i];
 
-		if (md->cpu == cpu)
+		if (md->core.cpu == cpu)
 			return md;
 	}
 
@@ -1005,7 +1013,7 @@ static PyObject *pyrf_evlist__read_on_cpu(struct pyrf_evlist *pevlist,
 	union perf_event *event;
 	int sample_id_all = 1, cpu;
 	static char *kwlist[] = { "cpu", "sample_id_all", NULL };
-	struct perf_mmap *md;
+	struct mmap *md;
 	int err;
 
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "i|i", kwlist,
@@ -1016,10 +1024,10 @@ static PyObject *pyrf_evlist__read_on_cpu(struct pyrf_evlist *pevlist,
 	if (!md)
 		return NULL;
 
-	if (perf_mmap__read_init(md) < 0)
+	if (perf_mmap__read_init(&md->core) < 0)
 		goto end;
 
-	event = perf_mmap__read_event(md);
+	event = perf_mmap__read_event(&md->core);
 	if (event != NULL) {
 		PyObject *pyevent = pyrf_event__new(event);
 		struct pyrf_event *pevent = (struct pyrf_event *)pyevent;
@@ -1036,10 +1044,10 @@ static PyObject *pyrf_evlist__read_on_cpu(struct pyrf_evlist *pevlist,
 
 		pevent->evsel = evsel;
 
-		err = perf_evsel__parse_sample(evsel, event, &pevent->sample);
+		err = evsel__parse_sample(evsel, event, &pevent->sample);
 
 		/* Consume the even only after we parsed it out. */
-		perf_mmap__consume(md);
+		perf_mmap__consume(&md->core);
 
 		if (err)
 			return PyErr_Format(PyExc_OSError,

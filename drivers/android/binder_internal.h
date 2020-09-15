@@ -8,6 +8,7 @@
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/mutex.h>
+#include <linux/refcount.h>
 #include <linux/stddef.h>
 #include <linux/types.h>
 #include <linux/uidgid.h>
@@ -33,6 +34,7 @@ struct binder_device {
 	struct miscdevice miscdev;
 	struct binder_context context;
 	struct inode *binderfs_inode;
+	refcount_t ref;
 };
 
 /**
@@ -130,7 +132,7 @@ struct binder_transaction_log_entry {
 	int return_error_line;
 	uint32_t return_error;
 	uint32_t return_error_param;
-	const char *context_name;
+	char context_name[BINDERFS_MAX_NAME + 1];
 };
 
 struct binder_transaction_log {

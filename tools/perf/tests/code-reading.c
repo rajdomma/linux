@@ -10,6 +10,7 @@
 #include <sys/param.h>
 #include <perf/cpumap.h>
 #include <perf/evlist.h>
+#include <perf/mmap.h>
 
 #include "debug.h"
 #include "dso.h"
@@ -19,12 +20,13 @@
 #include "evlist.h"
 #include "evsel.h"
 #include "thread_map.h"
-#include "cpumap.h"
 #include "machine.h"
 #include "map.h"
 #include "symbol.h"
 #include "event.h"
 #include "record.h"
+#include "util/mmap.h"
+#include "util/synthetic-events.h"
 #include "thread.h"
 
 #include "tests.h"
@@ -274,7 +276,7 @@ static int read_object_code(u64 addr, size_t len, u8 cpumode,
 		len = al.map->end - addr;
 
 	/* Read the object code using perf */
-	ret_len = dso__data_read_offset(al.map->dso, thread->mg->machine,
+	ret_len = dso__data_read_offset(al.map->dso, thread->maps->machine,
 					al.addr, buf1, len);
 	if (ret_len != len) {
 		pr_debug("dso__data_read_offset failed\n");
@@ -419,21 +421,21 @@ static int process_events(struct machine *machine, struct evlist *evlist,
 			  struct state *state)
 {
 	union perf_event *event;
-	struct perf_mmap *md;
+	struct mmap *md;
 	int i, ret;
 
-	for (i = 0; i < evlist->nr_mmaps; i++) {
+	for (i = 0; i < evlist->core.nr_mmaps; i++) {
 		md = &evlist->mmap[i];
-		if (perf_mmap__read_init(md) < 0)
+		if (perf_mmap__read_init(&md->core) < 0)
 			continue;
 
-		while ((event = perf_mmap__read_event(md)) != NULL) {
+		while ((event = perf_mmap__read_event(&md->core)) != NULL) {
 			ret = process_event(machine, evlist, event, state);
-			perf_mmap__consume(md);
+			perf_mmap__consume(&md->core);
 			if (ret < 0)
 				return ret;
 		}
-		perf_mmap__read_done(md);
+		perf_mmap__read_done(&md->core);
 	}
 	return 0;
 }
@@ -651,7 +653,7 @@ static int do_test_code_reading(bool try_kcore)
 
 		perf_evlist__config(evlist, &opts, NULL);
 
-		evsel = perf_evlist__first(evlist);
+		evsel = evlist__first(evlist);
 
 		evsel->core.attr.comm = 1;
 		evsel->core.attr.disabled = 1;
@@ -676,7 +678,7 @@ static int do_test_code_reading(bool try_kcore)
 
 			if (verbose > 0) {
 				char errbuf[512];
-				perf_evlist__strerror_open(evlist, errno, errbuf, sizeof(errbuf));
+				evlist__strerror_open(evlist, errno, errbuf, sizeof(errbuf));
 				pr_debug("perf_evlist__open() failed!\n%s\n", errbuf);
 			}
 
@@ -685,9 +687,9 @@ static int do_test_code_reading(bool try_kcore)
 		break;
 	}
 
-	ret = perf_evlist__mmap(evlist, UINT_MAX);
+	ret = evlist__mmap(evlist, UINT_MAX);
 	if (ret < 0) {
-		pr_debug("perf_evlist__mmap failed\n");
+		pr_debug("evlist__mmap failed\n");
 		goto out_put;
 	}
 

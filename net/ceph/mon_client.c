@@ -213,6 +213,13 @@ static void reopen_session(struct ceph_mon_client *monc)
 	__open_session(monc);
 }
 
+void ceph_monc_reopen_session(struct ceph_mon_client *monc)
+{
+	mutex_lock(&monc->mutex);
+	reopen_session(monc);
+	mutex_unlock(&monc->mutex);
+}
+
 static void un_backoff(struct ceph_mon_client *monc)
 {
 	monc->hunt_mult /= 2; /* reduce by 50% */
@@ -460,7 +467,7 @@ static void ceph_monc_handle_map(struct ceph_mon_client *monc,
 				 struct ceph_msg *msg)
 {
 	struct ceph_client *client = monc->client;
-	struct ceph_monmap *monmap = NULL, *old = monc->monmap;
+	struct ceph_monmap *monmap;
 	void *p, *end;
 
 	mutex_lock(&monc->mutex);
@@ -477,13 +484,13 @@ static void ceph_monc_handle_map(struct ceph_mon_client *monc,
 		goto out;
 	}
 
-	if (ceph_check_fsid(monc->client, &monmap->fsid) < 0) {
+	if (ceph_check_fsid(client, &monmap->fsid) < 0) {
 		kfree(monmap);
 		goto out;
 	}
 
-	client->monc.monmap = monmap;
-	kfree(old);
+	kfree(monc->monmap);
+	monc->monmap = monmap;
 
 	__ceph_monc_got_map(monc, CEPH_SUB_MONMAP, monc->monmap->epoch);
 	client->have_fsid = true;
@@ -1226,9 +1233,6 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 	struct ceph_mon_client *monc = con->private;
 	int type = le16_to_cpu(msg->hdr.type);
 
-	if (!monc)
-		return;
-
 	switch (type) {
 	case CEPH_MSG_AUTH_REPLY:
 		handle_auth_reply(monc, msg);
@@ -1303,7 +1307,7 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
 		 * request had a non-zero tid.  Work around this weirdness
 		 * by allocating a new message.
 		 */
-		/* fall through */
+		fallthrough;
 	case CEPH_MSG_MON_MAP:
 	case CEPH_MSG_MDS_MAP:
 	case CEPH_MSG_OSD_MAP:

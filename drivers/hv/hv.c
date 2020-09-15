@@ -117,8 +117,6 @@ int hv_synic_alloc(void)
 			pr_err("Unable to allocate post msg page\n");
 			goto err;
 		}
-
-		INIT_LIST_HEAD(&hv_cpu->chan_list);
 	}
 
 	return 0;
@@ -154,7 +152,7 @@ void hv_synic_free(void)
  * retrieve the initialized message and event pages.  Otherwise, we create and
  * initialize the message and event pages.
  */
-int hv_synic_init(unsigned int cpu)
+void hv_synic_enable_regs(unsigned int cpu)
 {
 	struct hv_per_cpu_context *hv_cpu
 		= per_cpu_ptr(hv_context.cpu_context, cpu);
@@ -184,11 +182,7 @@ int hv_synic_init(unsigned int cpu)
 
 	shared_sint.vector = HYPERVISOR_CALLBACK_VECTOR;
 	shared_sint.masked = false;
-	if (ms_hyperv.hints & HV_DEPRECATING_AEOI_RECOMMENDED)
-		shared_sint.auto_eoi = false;
-	else
-		shared_sint.auto_eoi = true;
-
+	shared_sint.auto_eoi = hv_recommend_using_aeoi();
 	hv_set_synint_state(VMBUS_MESSAGE_SINT, shared_sint.as_uint64);
 
 	/* Enable the global synic bit */
@@ -196,8 +190,13 @@ int hv_synic_init(unsigned int cpu)
 	sctrl.enable = 1;
 
 	hv_set_synic_state(sctrl.as_uint64);
+}
 
-	hv_stimer_init(cpu);
+int hv_synic_init(unsigned int cpu)
+{
+	hv_synic_enable_regs(cpu);
+
+	hv_stimer_legacy_init(cpu, VMBUS_MESSAGE_SINT);
 
 	return 0;
 }
@@ -205,49 +204,12 @@ int hv_synic_init(unsigned int cpu)
 /*
  * hv_synic_cleanup - Cleanup routine for hv_synic_init().
  */
-int hv_synic_cleanup(unsigned int cpu)
+void hv_synic_disable_regs(unsigned int cpu)
 {
 	union hv_synic_sint shared_sint;
 	union hv_synic_simp simp;
 	union hv_synic_siefp siefp;
 	union hv_synic_scontrol sctrl;
-	struct vmbus_channel *channel, *sc;
-	bool channel_found = false;
-	unsigned long flags;
-
-	hv_get_synic_state(sctrl.as_uint64);
-	if (sctrl.enable != 1)
-		return -EFAULT;
-
-	/*
-	 * Search for channels which are bound to the CPU we're about to
-	 * cleanup. In case we find one and vmbus is still connected we need to
-	 * fail, this will effectively prevent CPU offlining. There is no way
-	 * we can re-bind channels to different CPUs for now.
-	 */
-	mutex_lock(&vmbus_connection.channel_mutex);
-	list_for_each_entry(channel, &vmbus_connection.chn_list, listentry) {
-		if (channel->target_cpu == cpu) {
-			channel_found = true;
-			break;
-		}
-		spin_lock_irqsave(&channel->lock, flags);
-		list_for_each_entry(sc, &channel->sc_list, sc_list) {
-			if (sc->target_cpu == cpu) {
-				channel_found = true;
-				break;
-			}
-		}
-		spin_unlock_irqrestore(&channel->lock, flags);
-		if (channel_found)
-			break;
-	}
-	mutex_unlock(&vmbus_connection.channel_mutex);
-
-	if (channel_found && vmbus_connection.conn_state == CONNECTED)
-		return -EBUSY;
-
-	hv_stimer_cleanup(cpu);
 
 	hv_get_synint_state(VMBUS_MESSAGE_SINT, shared_sint.as_uint64);
 
@@ -270,8 +232,53 @@ int hv_synic_cleanup(unsigned int cpu)
 	hv_set_siefp(siefp.as_uint64);
 
 	/* Disable the global synic bit */
+	hv_get_synic_state(sctrl.as_uint64);
 	sctrl.enable = 0;
 	hv_set_synic_state(sctrl.as_uint64);
+}
+
+int hv_synic_cleanup(unsigned int cpu)
+{
+	struct vmbus_channel *channel, *sc;
+	bool channel_found = false;
+
+	/*
+	 * Hyper-V does not provide a way to change the connect CPU once
+	 * it is set; we must prevent the connect CPU from going offline.
+	 */
+	if (cpu == VMBUS_CONNECT_CPU)
+		return -EBUSY;
+
+	/*
+	 * Search for channels which are bound to the CPU we're about to
+	 * cleanup.  In case we find one and vmbus is still connected, we
+	 * fail; this will effectively prevent CPU offlining.
+	 *
+	 * TODO: Re-bind the channels to different CPUs.
+	 */
+	mutex_lock(&vmbus_connection.channel_mutex);
+	list_for_each_entry(channel, &vmbus_connection.chn_list, listentry) {
+		if (channel->target_cpu == cpu) {
+			channel_found = true;
+			break;
+		}
+		list_for_each_entry(sc, &channel->sc_list, sc_list) {
+			if (sc->target_cpu == cpu) {
+				channel_found = true;
+				break;
+			}
+		}
+		if (channel_found)
+			break;
+	}
+	mutex_unlock(&vmbus_connection.channel_mutex);
+
+	if (channel_found && vmbus_connection.conn_state == CONNECTED)
+		return -EBUSY;
+
+	hv_stimer_legacy_cleanup(cpu);
+
+	hv_synic_disable_regs(cpu);
 
 	return 0;
 }

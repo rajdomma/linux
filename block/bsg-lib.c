@@ -181,9 +181,12 @@ EXPORT_SYMBOL_GPL(bsg_job_get);
 void bsg_job_done(struct bsg_job *job, int result,
 		  unsigned int reply_payload_rcv_len)
 {
+	struct request *rq = blk_mq_rq_from_pdu(job);
+
 	job->result = result;
 	job->reply_payload_rcv_len = reply_payload_rcv_len;
-	blk_mq_complete_request(blk_mq_rq_from_pdu(job));
+	if (likely(!blk_should_fake_timeout(rq->q)))
+		blk_mq_complete_request(rq);
 }
 EXPORT_SYMBOL_GPL(bsg_job_done);
 
@@ -266,6 +269,7 @@ static blk_status_t bsg_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct request *req = bd->rq;
 	struct bsg_set *bset =
 		container_of(q->tag_set, struct bsg_set, tag_set);
+	blk_status_t sts = BLK_STS_IOERR;
 	int ret;
 
 	blk_mq_start_request(req);
@@ -274,14 +278,15 @@ static blk_status_t bsg_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return BLK_STS_IOERR;
 
 	if (!bsg_prepare_job(dev, req))
-		return BLK_STS_IOERR;
+		goto out;
 
 	ret = bset->job_fn(blk_mq_rq_to_pdu(req));
-	if (ret)
-		return BLK_STS_IOERR;
+	if (!ret)
+		sts = BLK_STS_OK;
 
+out:
 	put_device(dev);
-	return BLK_STS_OK;
+	return sts;
 }
 
 /* called right after the request is allocated for the request_queue */
@@ -373,7 +378,7 @@ struct request_queue *bsg_setup_queue(struct device *dev, const char *name,
 	bset->timeout_fn = timeout;
 
 	set = &bset->tag_set;
-	set->ops = &bsg_mq_ops,
+	set->ops = &bsg_mq_ops;
 	set->nr_hw_queues = 1;
 	set->queue_depth = 128;
 	set->numa_node = NUMA_NO_NODE;

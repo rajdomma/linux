@@ -9,7 +9,6 @@
 #include "tests.h"
 #include "evlist.h"
 #include "evsel.h"
-#include "util.h"
 #include "debug.h"
 #include "parse-events.h"
 #include "thread_map.h"
@@ -17,7 +16,7 @@
 
 static int attach__enable_on_exec(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 	struct target target = {
 		.uid = UINT_MAX,
 	};
@@ -59,7 +58,7 @@ static int detach__enable_on_exec(struct evlist *evlist)
 
 static int attach__current_disabled(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 	struct perf_thread_map *threads;
 	int err;
 
@@ -73,7 +72,7 @@ static int attach__current_disabled(struct evlist *evlist)
 
 	evsel->core.attr.disabled = 1;
 
-	err = perf_evsel__open_per_thread(evsel, threads);
+	err = evsel__open_per_thread(evsel, threads);
 	if (err) {
 		pr_debug("Failed to open event cpu-clock:u\n");
 		return err;
@@ -85,7 +84,7 @@ static int attach__current_disabled(struct evlist *evlist)
 
 static int attach__current_enabled(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 	struct perf_thread_map *threads;
 	int err;
 
@@ -97,7 +96,7 @@ static int attach__current_enabled(struct evlist *evlist)
 		return -1;
 	}
 
-	err = perf_evsel__open_per_thread(evsel, threads);
+	err = evsel__open_per_thread(evsel, threads);
 
 	perf_thread_map__put(threads);
 	return err == 0 ? TEST_OK : TEST_FAIL;
@@ -105,14 +104,14 @@ static int attach__current_enabled(struct evlist *evlist)
 
 static int detach__disable(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 
 	return evsel__enable(evsel);
 }
 
 static int attach__cpu_disabled(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 	struct perf_cpu_map *cpus;
 	int err;
 
@@ -126,7 +125,7 @@ static int attach__cpu_disabled(struct evlist *evlist)
 
 	evsel->core.attr.disabled = 1;
 
-	err = perf_evsel__open_per_cpu(evsel, cpus);
+	err = evsel__open_per_cpu(evsel, cpus, -1);
 	if (err) {
 		if (err == -EACCES)
 			return TEST_SKIP;
@@ -141,7 +140,7 @@ static int attach__cpu_disabled(struct evlist *evlist)
 
 static int attach__cpu_enabled(struct evlist *evlist)
 {
-	struct evsel *evsel = perf_evlist__last(evlist);
+	struct evsel *evsel = evlist__last(evlist);
 	struct perf_cpu_map *cpus;
 	int err;
 
@@ -153,7 +152,7 @@ static int attach__cpu_enabled(struct evlist *evlist)
 		return -1;
 	}
 
-	err = perf_evsel__open_per_cpu(evsel, cpus);
+	err = evsel__open_per_cpu(evsel, cpus, -1);
 	if (err == -EACCES)
 		return TEST_SKIP;
 
@@ -181,7 +180,7 @@ static int test_times(int (attach)(struct evlist *),
 		goto out_err;
 	}
 
-	evsel = perf_evlist__last(evlist);
+	evsel = evlist__last(evlist);
 	evsel->core.attr.read_format |=
 		PERF_FORMAT_TOTAL_TIME_ENABLED |
 		PERF_FORMAT_TOTAL_TIME_RUNNING;

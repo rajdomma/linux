@@ -361,7 +361,7 @@ EXPORT_SYMBOL(deactivate_locked_super);
  */
 void deactivate_super(struct super_block *s)
 {
-        if (!atomic_add_unless(&s->s_active, -1, 1)) {
+	if (!atomic_add_unless(&s->s_active, -1, 1)) {
 		down_write(&s->s_umount);
 		deactivate_locked_super(s);
 	}
@@ -448,10 +448,12 @@ void generic_shutdown_super(struct super_block *sb)
 		sync_filesystem(sb);
 		sb->s_flags &= ~SB_ACTIVE;
 
-		fsnotify_sb_delete(sb);
 		cgroup_writeback_umount();
 
+		/* evict all inodes with zero refcount */
 		evict_inodes(sb);
+		/* only nonzero refcount inodes can have marks */
+		fsnotify_sb_delete(sb);
 
 		if (sb->s_dio_done_wq) {
 			destroy_workqueue(sb->s_dio_done_wq);
@@ -1301,6 +1303,7 @@ int get_tree_bdev(struct fs_context *fc,
 	if (bdev->bd_fsfreeze_count > 0) {
 		mutex_unlock(&bdev->bd_fsfreeze_mutex);
 		warnf(fc, "%pg: Can't mount, blockdev is frozen", bdev);
+		blkdev_put(bdev, mode);
 		return -EBUSY;
 	}
 
@@ -1308,8 +1311,10 @@ int get_tree_bdev(struct fs_context *fc,
 	fc->sget_key = bdev;
 	s = sget_fc(fc, test_bdev_super_fc, set_bdev_super_fc);
 	mutex_unlock(&bdev->bd_fsfreeze_mutex);
-	if (IS_ERR(s))
+	if (IS_ERR(s)) {
+		blkdev_put(bdev, mode);
 		return PTR_ERR(s);
+	}
 
 	if (s->s_root) {
 		/* Don't summarily change the RO/RW state. */
@@ -1555,11 +1560,6 @@ int vfs_get_tree(struct fs_context *fc)
 	sb = fc->root->d_sb;
 	WARN_ON(!sb->s_bdi);
 
-	if (fc->subtype && !sb->s_subtype) {
-		sb->s_subtype = fc->subtype;
-		fc->subtype = NULL;
-	}
-
 	/*
 	 * Write barrier is for super_cache_count(). We place it before setting
 	 * SB_BORN as the data dependency between the two functions is the
@@ -1598,11 +1598,9 @@ int super_setup_bdi_name(struct super_block *sb, char *fmt, ...)
 	int err;
 	va_list args;
 
-	bdi = bdi_alloc(GFP_KERNEL);
+	bdi = bdi_alloc(NUMA_NO_NODE);
 	if (!bdi)
 		return -ENOMEM;
-
-	bdi->name = sb->s_type->name;
 
 	va_start(args, fmt);
 	err = bdi_register_va(bdi, fmt, args);

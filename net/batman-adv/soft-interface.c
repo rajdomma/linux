@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2007-2019  B.A.T.M.A.N. contributors:
+/* Copyright (C) 2007-2020  B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  */
@@ -230,7 +230,7 @@ static netdev_tx_t batadv_interface_tx(struct sk_buff *skb,
 			break;
 		}
 
-		/* fall through */
+		fallthrough;
 	case ETH_P_BATMAN:
 		goto dropped;
 	}
@@ -406,7 +406,7 @@ end:
  * @hdr_size: size of already parsed batman-adv header
  * @orig_node: originator from which the batman-adv packet was sent
  *
- * Sends a ethernet frame to the receive path of the local @soft_iface.
+ * Sends an ethernet frame to the receive path of the local @soft_iface.
  * skb->data has still point to the batman-adv header with the size @hdr_size.
  * The caller has to have parsed this header already and made sure that at least
  * @hdr_size bytes are still available for pull in @skb.
@@ -436,7 +436,7 @@ void batadv_interface_rx(struct net_device *soft_iface,
 	/* clean the netfilter state now that the batman-adv header has been
 	 * removed
 	 */
-	nf_reset(skb);
+	nf_reset_ct(skb);
 
 	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
 		goto dropped;
@@ -455,7 +455,7 @@ void batadv_interface_rx(struct net_device *soft_iface,
 		if (vhdr->h_vlan_encapsulated_proto != htons(ETH_P_BATMAN))
 			break;
 
-		/* fall through */
+		fallthrough;
 	case ETH_P_BATMAN:
 		goto dropped;
 	}
